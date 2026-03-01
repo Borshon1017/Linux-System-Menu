@@ -336,6 +336,19 @@ users_logged() {
   pause
 }
 
+about() {
+  title
+  echo "About"
+  hr
+  echo "Developers:"
+  echo "  - Borshon Alfred GOMES"
+  echo "  - Chiemerie David EKWEANUA"
+  echo "  - Umair ATIQUE"
+  echo
+  echo "Project: ${APP_NAME}"
+  pause
+}
+
 # -------- WiFi --------
 wifi_menu() {
   if ! have nmcli; then
@@ -653,7 +666,8 @@ main_menu() {
     echo "4) WiFi"
     echo "5) Bluetooth"
     echo "6) Audio"
-    echo "7) Brightness (optional)"
+    echo "7) Brightness"
+    echo "8) About"
     echo "0) Exit"
     echo
     read -r -p "Select option: " opt
@@ -666,13 +680,104 @@ main_menu() {
       5) bluetooth_menu ;;
       6) audio_menu ;;
       7) brightness_menu ;;
+      8) about ;;
       0) break ;;
       *) warn "Invalid option"; pause ;;
     esac
   done
 }
 
+# -------- Simple shell TUI (no external deps) --------
+tui_draw() {
+  local -n _opts=$1
+  local sel=$2
+  printf '\e[H\e[2J'
+  echo "$APP_NAME"
+  hr
+  sys_status
+  hr
+  local i
+  for i in "${!_opts[@]}"; do
+    local idx=$((i+1))
+    if [[ $i -eq $sel ]]; then
+      printf '\e[7m%2d) %s\e[0m\n' "$idx" "${_opts[i]}"
+    else
+      printf ' %2d) %s\n' "$idx" "${_opts[i]}"
+    fi
+  done
+  echo
+  echo "Use ↑/↓ or number keys, Enter to select, q to quit."
+}
+
+tui_main_menu() {
+  local opts=("Disk usage" "Memory usage" "Logged on users" "WiFi" "Bluetooth" "Audio" "Brightness (optional)" "About" "Exit")
+  local sel=0
+  local max=$(( ${#opts[@]} - 1 ))
+  # save tty state
+  stty -echo -icanon time 0 min 0
+  trap 'stty sane; clear; exit' INT TERM
+  while true; do
+    tui_draw opts $sel
+    # read key (up to 3 bytes for arrows)
+    IFS= read -rsn1 key1
+    if [[ $key1 == $'\x1b' ]]; then
+      # possible arrow sequence
+      IFS= read -rsn2 -t 0.01 keyrest || true
+      key="$key1$keyrest"
+      case "$key" in
+        $'\x1b[A') (( sel-- ));;
+        $'\x1b[B') (( sel++ ));;
+      esac
+    elif [[ $key1 == $'\n' || $key1 == $'\r' ]]; then
+      : # enter pressed - handled below
+      true
+    elif [[ $key1 == 'q' || $key1 == 'Q' ]]; then
+      stty sane
+      clear
+      return
+    elif [[ $key1 =~ [0-9] ]]; then
+      # read possible second digit for 2-digit numbers
+      IFS= read -rsn1 -t 0.01 key2 || true
+      if [[ $key2 =~ [0-9] ]]; then
+        num="$key1$key2"
+      else
+        num="$key1"
+      fi
+      if (( num >=1 && num <= ${#opts[@]} )); then
+        sel=$((num-1))
+      fi
+    fi
+
+    # normalize sel
+    if (( sel < 0 )); then sel=$max; fi
+    if (( sel > max )); then sel=0; fi
+
+    # if Enter pressed (check last read), perform action
+    # We detect Enter by attempting to read with timeout
+    IFS= read -rsn1 -t 0.01 chk || true
+    if [[ $chk == $'\n' || $chk == $'\r' ]]; then
+      case $sel in
+        0) disk_usage ;;
+        1) memory_usage ;;
+        2) users_logged ;;
+        3) wifi_menu ;;
+        4) bluetooth_menu ;;
+        5) audio_menu ;;
+        6) brightness_menu ;;
+        7) about ;;
+        8) stty sane; clear; return ;;
+      esac
+    fi
+  done
+}
+
 log "Starting $APP_NAME"
+# command-line flags
+if [[ "${1:-}" == "--tui" ]]; then
+  tui_main_menu
+  exit
+fi
+
 # allow skipping the interactive main menu when running tests or sourcing
 if [[ "${SKIP_MAIN_MENU:-0}" != "1" ]]; then
   main_menu
